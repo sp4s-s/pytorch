@@ -326,10 +326,16 @@ class DynamoGraphTransformer(torch.fx.Transformer):
 
         # For AttrSource placeholders (e.g., DTensor._local_tensor), record
         # that we need to create a getattr call on the parent input
-        for graph_placeholder_idx, (parent_input_idx, attr_name) in self.attr_source_mapping.items():
+        for graph_placeholder_idx, (
+            parent_input_idx,
+            attr_name,
+        ) in self.attr_source_mapping.items():
             if graph_placeholder_idx < len(self.placeholders):
                 old_placeholder = self.placeholders[graph_placeholder_idx]
-                self.attr_getattr_mapping[old_placeholder] = (parent_input_idx, attr_name)
+                self.attr_getattr_mapping[old_placeholder] = (
+                    parent_input_idx,
+                    attr_name,
+                )
 
     def placeholder(
         self, target: Target, args: tuple[Argument, ...], kwargs: dict[str, Any]

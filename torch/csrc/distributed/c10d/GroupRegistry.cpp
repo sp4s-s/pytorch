@@ -52,6 +52,7 @@ class GroupRegistry {
   void unregister_all_groups() {
     std::unique_lock write_lock(lock_);
     registry_.clear();
+    group_name_aliases_.clear();
   }
 
   void register_alias(
@@ -74,10 +75,24 @@ class GroupRegistry {
       group->setGroupNameAlias(alias_name);
     }
 
-    auto [_, inserted] =
-        group_name_aliases_.try_emplace(alias_name, canonical_name);
-    TORCH_CHECK(
-        inserted, "An alias is already registered under the name ", alias_name);
+    // Check if the alias already exists
+    auto alias_it = group_name_aliases_.find(alias_name);
+    if (alias_it != group_name_aliases_.end()) {
+      // Alias exists - check if it points to the same canonical name
+      // (idempotent)
+      TORCH_CHECK(
+          alias_it->second == canonical_name,
+          "An alias is already registered under the name ",
+          alias_name,
+          " pointing to '",
+          alias_it->second,
+          "', cannot re-register to point to '",
+          canonical_name,
+          "'");
+      // Same canonical name, skip registration (idempotent)
+      return;
+    }
+    group_name_aliases_.emplace(alias_name, canonical_name);
   }
 
  private:
