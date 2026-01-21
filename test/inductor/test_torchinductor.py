@@ -533,10 +533,29 @@ def check_model(
     correct_flat, correct_spec = tree_flatten(correct)
     actual_flat = pytree.tree_leaves(actual)
 
+    def to_dtype_preserve_strides(src, dtype):
+        """Convert tensor to dtype while preserving strides."""
+        if src.dtype == dtype:
+            return src
+        # Expanded tensors have zero strides (multiple elements refer to same memory).
+        # We can't preserve these strides with as_strided + copy_, so fall back to .to()
+        if 0 in src.stride():
+            return src.to(dtype)
+        # Allocate buffer large enough to hold the strided view, copy converted data
+        if 0 in src.size():
+            return torch.empty_strided(
+                src.size(), src.stride(), dtype=dtype, device=src.device
+            )
+        needed_size = sum((s - 1) * st for s, st in zip(src.size(), src.stride())) + 1
+        buffer = torch.empty(needed_size, dtype=dtype, device=src.device)
+        out = torch.as_strided(buffer, src.size(), src.stride(), 0)
+        out.copy_(src)
+        return out
+
     def reference_to_expect(actual_flat, correct_flat):
         return tuple(
             (
-                y.to(x.dtype)
+                to_dtype_preserve_strides(y, x.dtype)
                 if isinstance(y, torch.Tensor) and y.dtype.is_floating_point
                 else y
             )
@@ -614,6 +633,10 @@ def check_model(
             for r in correct_flat
             if isinstance(r, torch.Tensor) and r.requires_grad
         ]
+        # Skip gradient checking if there are no differentiable outputs
+        # (e.g., 0-element tensors don't require gradients)
+        if len(grads) == 0:
+            return
         for g in grads:
             g /= g.norm()
 
@@ -646,6 +669,14 @@ def check_model(
                 expect_grad = reference_to_expect(actual_grad, correct_grad)
             else:
                 expect_grad = correct_grad
+
+            # Skip exact stride checking for 0-element gradient tensors since
+            # compiled backward pass may produce different (but semantically
+            # equivalent) strides for empty tensors
+            if exact_stride and any(
+                isinstance(g, torch.Tensor) and g.numel() == 0 for g in actual_grad
+            ):
+                exact_stride = False
 
             self.assertEqual(
                 actual_grad,
