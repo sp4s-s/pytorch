@@ -164,26 +164,26 @@ def higher_order_invoke_subgraph(
     *operands: ir.Value,
 ) -> Sequence[ir.Value]:
     """Export invoke_subgraph HOP by creating a direct function call.
-    
+
     This preserves the function as a separate entity in the ONNX graph
     instead of inlining it, which is the purpose of invoke_subgraph.
-    
+
     Note: The onnxscript optimizer should be configured to not inline functions
     created by invoke_subgraph to preserve the intended structure.
-    
+
     Args:
         subgraph: The function to invoke
         identifier: Optional identifier for the subgraph (used for caching in PyTorch,
             not needed for ONNX export as the function reference provides all necessary information)
         *operands: Input values to pass to the function
-    
+
     Returns:
         Sequence of output values from the function call
     """
     # Create a node that calls the subgraph function directly with the operands
     assert _core.current_tracer is not None
     tracer = _core.current_tracer
-    
+
     # Create the function call node
     node = ir.Node(
         subgraph.domain,
@@ -191,13 +191,13 @@ def higher_order_invoke_subgraph(
         list(operands),
         num_outputs=len(subgraph.outputs),
     )
-    
+
     # ONNX Runtime complains about duplicate output names if we don't rename them.
     # But this doesn't seem to be an actual violation of SSA form without renaming.
     for func_out, out in zip(subgraph.outputs, node.outputs):
         out.name = f"{func_out.name}_{subgraph.name}"
-    
+
     # Add the node to the current tracer
     tracer.nodes.append(node)
-    
+
     return node.outputs
