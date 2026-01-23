@@ -35,26 +35,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - cuda_version: "12.6"
-            arch: "x86_64"
-            cuda_short: "126"
-            torch_cuda_arch_list: "8.0;8.6;9.0"
-            docker_image: "pytorch/manylinux2_28-builder:cuda12.6"
-            runner: "linux.12xlarge.memory"
+          # - cuda_version: "12.6"
+          #   arch: "x86_64"
+          #   cuda_short: "126"
+          #   torch_cuda_arch_list: "8.0;8.6;9.0"
+          #   docker_image: "pytorch/manylinux2_28-builder:cuda12.6"
+          #   runner: "linux.12xlarge.memory"
+          # - cuda_version: "13.0"
+          #   arch: "x86_64"
+          #   cuda_short: "130"
+          #   torch_cuda_arch_list: "8.0;8.6;9.0;10.0"
+          #   docker_image: "pytorch/manylinux2_28-builder:cuda13.0"
+          #   runner: "linux.12xlarge.memory"
+          # - cuda_version: "12.6"
+          #   arch: "aarch64"
+          #   cuda_short: "126"
+          #   torch_cuda_arch_list: "8.0;8.6;9.0"
+          #   docker_image: "quay.io/pypa/manylinux_2_34_aarch64"
+          #   runner: "linux.arm64.r7g.12xlarge.memory"
+          #   max_jobs: "4"
+          #   nvcc_threads: "2"
           - cuda_version: "13.0"
-            arch: "x86_64"
-            cuda_short: "130"
-            torch_cuda_arch_list: "8.0;8.6;9.0;10.0"
-            docker_image: "pytorch/manylinux2_28-builder:cuda13.0"
-            runner: "linux.12xlarge.memory"
-          - cuda_version: "12.6"
             arch: "aarch64"
-            cuda_short: "126"
-            torch_cuda_arch_list: "8.0;8.6;9.0"
+            cuda_short: "130"
+            torch_cuda_arch_list: "9.0;10.0"
             docker_image: "quay.io/pypa/manylinux_2_34_aarch64"
             runner: "linux.arm64.r7g.12xlarge.memory"
-            max_jobs: "4"
-            nvcc_threads: "2"
+            # max_jobs: "4"
+            # nvcc_threads: "2"
     timeout-minutes: 1440
     env:
       DOCKER_IMAGE: ${{ matrix.docker_image }}
@@ -70,8 +78,6 @@ jobs:
 
       - name: Checkout PyTorch
         uses: pytorch/pytorch/.github/actions/checkout-pytorch@main
-        with:
-          submodules: true
 
       - name: Setup Linux
         uses: ./.github/actions/setup-linux
@@ -86,6 +92,7 @@ jobs:
       - name: Build Flash Attention 3 wheel
         run: |
           set -x
+          sudo sysctl -w vm.max_map_count=524288
           mkdir -p "${RUNNER_TEMP}/artifacts/"
           container_name=$(docker run \
             --tty \
