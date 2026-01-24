@@ -155,6 +155,104 @@ class GraphModule(torch.nn.Module):
         res = fn(x)
         self.assertEqual(res, (x + 1, [0]))
 
+    def test_device_mesh_as_fake_script_object(self):
+        """
+        Test that DeviceMeshVariable correctly handles DeviceMesh wrapped in
+        FakeScriptObject during fake distributed tracing.
+        """
+        from torch._library.fake_class_registry import FakeScriptObject
+
+        device_mesh = init_device_mesh(
+            device_type="cpu",
+            mesh_shape=(self.world_size,),
+            mesh_dim_names=("dp",),
+        )
+
+        fake_mesh = FakeScriptObject(
+            wrapped_obj=device_mesh,
+            script_class_name="DeviceMesh",
+            x=device_mesh,
+        )
+
+        from torch._dynamo.variables.distributed import DeviceMeshVariable
+        from torch._dynamo.source import ConstantSource
+
+        self.assertTrue(DeviceMeshVariable.is_device_mesh(fake_mesh))
+
+        var = DeviceMeshVariable(
+            fake_mesh, source=ConstantSource("fake_mesh")
+        )
+        self.assertEqual(var.value, device_mesh)
+        self.assertEqual(var.value.ndim, device_mesh.ndim)
+        self.assertEqual(var.value.device_type, device_mesh.device_type)
+
+    def test_process_group_as_graph_input(self):
+        """
+        Test that ProcessGroupVariable correctly handles proxy tracking.
+        ProcessGroup objects should be lifted as graph inputs rather than
+        being embedded as constants (since repr() produces invalid Python syntax).
+        """
+        from torch._dynamo.variables.distributed import ProcessGroupVariable
+        from torch._dynamo.source import ConstantSource
+        import torch.fx as fx
+
+        pg = dist.group.WORLD
+        graph = fx.Graph()
+        proxy = graph.placeholder("process_group")
+
+        pg_var = ProcessGroupVariable(
+            pg, proxy=proxy, source=ConstantSource("pg")
+        )
+
+        self.assertEqual(pg_var.value, pg)
+        self.assertEqual(pg_var.as_python_constant(), pg)
+        self.assertEqual(pg_var.as_proxy(), proxy)
+
+    def test_is_process_group_detection(self):
+        """
+        Test _is_process_group correctly identifies ProcessGroup and FakeProcessGroup.
+        This helper is used by both the partitioner and graph compiler to properly
+        handle ProcessGroup objects in AOT Autograd.
+        """
+        from torch._functorch.partitioners import _is_process_group
+
+        pg = dist.group.WORLD
+        self.assertTrue(_is_process_group(pg))
+
+        self.assertFalse(_is_process_group(torch.tensor([1, 2, 3])))
+        self.assertFalse(_is_process_group("not_a_pg"))
+        self.assertFalse(_is_process_group(None))
+
+    def test_extract_runtime_device_meshes(self):
+        """
+        Test extract_runtime_device_meshes correctly extracts DeviceMesh from DTensor.
+        This is used in the 'device mesh in, device mesh out' pattern for
+        precompilation: when loading a precompiled artifact, the output DTensors
+        should use the live DeviceMesh from the runtime inputs.
+        """
+        from torch._functorch._aot_autograd.subclass_utils import (
+            extract_runtime_device_meshes,
+        )
+        from torch.distributed.tensor import DTensor
+
+        device_mesh = init_device_mesh(
+            device_type="cpu",
+            mesh_shape=(self.world_size,),
+            mesh_dim_names=("dp",),
+        )
+
+        local_tensor = torch.randn(4, 4)
+        dtensor = DTensor.from_local(local_tensor, device_mesh, [])
+
+        extracted_mesh = extract_runtime_device_meshes([dtensor])
+        self.assertEqual(extracted_mesh, device_mesh)
+
+        no_mesh = extract_runtime_device_meshes([torch.randn(4, 4)])
+        self.assertIsNone(no_mesh)
+
+        no_mesh_empty = extract_runtime_device_meshes([])
+        self.assertIsNone(no_mesh_empty)
+
 
 instantiate_parametrized_tests(TestFakeDistributed)
 
