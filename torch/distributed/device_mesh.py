@@ -298,7 +298,7 @@ else:
         def _compute_coordinates_from_mesh(
             mesh_tensor: torch.Tensor,
             rank: int,
-        ) -> Optional[tuple[int, ...]]:
+        ) -> tuple[int, ...] | None:
             """
             Compute the coordinates of a rank within a mesh tensor.
 
@@ -494,7 +494,9 @@ else:
                     split_ranks=pg_ranks_by_dim.tolist(),
                     group_desc=group_desc,
                 )
-                return dim_group.group_name  # type: ignore[union-attr]
+                if dim_group is None:
+                    return None
+                return dim_group.group_name
 
             # If the subgroup has been already created through `split_group`, we simply loop over `pg_ranks_by_dim`
             # and append the `group_name` to the `dim_group_names` list when the current rank is in the subgroup.
@@ -1149,12 +1151,16 @@ else:
             return self._coordinate_on_dim
 
         def _sym_get_coordinate(self, index: int) -> int:
-            if not _in_fake_mode():
+            import torch.distributed.config as config
+            from torch._guards import detect_fake_mode
+
+            if not detect_fake_mode() or not config.compile_on_one_rank:
                 # This is only valid when the current rank is part of the mesh.
                 assert self._coordinate_on_dim is not None
                 return self._coordinate_on_dim[index]
 
-            # This will cause the ops to be registered
+            # This will cause the ops to be registered - so don't let RUFF
+            # delete this import because it thinks it's unused...
             from ._ops import device_mesh  # noqa: F401
 
             # Temporarily turn off tracing while we lift the constant
@@ -1167,11 +1173,6 @@ else:
             return torch.ops.device_mesh._runtime_compute_coordinate_on_dim(
                 full_mesh, index
             )
-
-        def _sym_get_coordinate(self, index: int) -> int:
-            # This is only valid when the current rank is part of the mesh.
-            assert self._coordinate_on_dim
-            return self._coordinate_on_dim[index]
 
         def _flatten(
             self,
@@ -1484,9 +1485,3 @@ else:
         )
 
         return device_mesh
-
-
-def _in_fake_mode() -> bool:
-    if context := torch._guards.TracingContext.try_get():
-        return context.fake_mode is not None
-    return False
