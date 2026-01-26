@@ -298,7 +298,7 @@ else:
         def _compute_coordinates_from_mesh(
             mesh_tensor: torch.Tensor,
             rank: int,
-        ) -> Optional[tuple[int, ...]]:
+        ) -> tuple[int, ...] | None:
             """
             Compute the coordinates of a rank within a mesh tensor.
 
@@ -499,6 +499,9 @@ else:
                     split_ranks=pg_ranks_by_dim.tolist(),
                     group_desc=group_desc,
                 )
+                if dim_group is None:
+                    return None
+
                 # For precompilation consistency, we need all ranks to use the
                 # same canonical name. The split_group creates different groups
                 # for different ranks, so we compute a deterministic canonical
@@ -509,15 +512,14 @@ else:
                 canonical_name = GroupName(
                     f"mesh_{group_desc}_{hash(first_subgroup_ranks) % (10**8)}"
                 )
-                if dim_group is not None and dim_group.group_name != canonical_name:
+                if dim_group.group_name != canonical_name:
                     try:
                         torch._C._distributed_c10d._register_process_group_alias(
                             canonical_name, dim_group.group_name
                         )
                     except RuntimeError as e:
                         if "already registered" in str(e):
-                            # Alias already exists from a previous mesh creation
-                            # with the same topology (same group_desc and ranks).
+                            # Alias already exists and points to a still-valid PG.
                             # This can happen when creating multiple meshes that
                             # share dimensions (e.g., (fsdp, tp) and (fsdp_cp, tp)).
                             # The existing alias points to an equivalent group,
@@ -1217,12 +1219,16 @@ else:
             return self._coordinate_on_dim
 
         def _sym_get_coordinate(self, index: int) -> int:
-            if not _in_fake_mode():
+            import torch.distributed.config as config
+            from torch._guards import detect_fake_mode
+
+            if not detect_fake_mode() or not config.compile_on_one_rank:
                 # This is only valid when the current rank is part of the mesh.
                 assert self._coordinate_on_dim is not None
                 return self._coordinate_on_dim[index]
 
-            # This will cause the ops to be registered
+            # This will cause the ops to be registered - so don't let RUFF
+            # delete this import because it thinks it's unused...
             from ._ops import device_mesh  # noqa: F401
 
             # Temporarily turn off tracing while we lift the constant
@@ -1235,11 +1241,6 @@ else:
             return torch.ops.device_mesh._runtime_compute_coordinate_on_dim(
                 full_mesh, index
             )
-
-        def _sym_get_coordinate(self, index: int) -> int:
-            # This is only valid when the current rank is part of the mesh.
-            assert self._coordinate_on_dim
-            return self._coordinate_on_dim[index]
 
         def _flatten(
             self,
@@ -1552,9 +1553,3 @@ else:
         )
 
         return device_mesh
-
-
-def _in_fake_mode() -> bool:
-    if context := torch._guards.TracingContext.try_get():
-        return context.fake_mode is not None
-    return False
