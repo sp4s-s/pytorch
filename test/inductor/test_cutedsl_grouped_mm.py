@@ -150,6 +150,68 @@ class TestCuTeDSLGroupedGemm(InductorTestCase):
         self.assertEqual(c_compiled.dtype, dtype)
         torch.testing.assert_close(c_eager, c_compiled)
 
+    @parametrize("group_size", (2, 8))
+    @parametrize("M_hint", (256, 1024))
+    @parametrize("K", (64, 128))
+    @parametrize("N", (128, 256))
+    def test_scaled_grouped_gemm_basic(
+        self, group_size: int, M_hint: int, K: int, N: int
+    ):
+        """Test scaled grouped GEMM with FP8 inputs and BF16 output."""
+        device = "cuda"
+        dtype_input = torch.float8_e4m3fn
+        dtype_output = torch.bfloat16
+        dtype_scale = torch.float32
+
+        # Generate base inputs with alignment for FP8
+        alignment = 16  # FP8 alignment requirement
+        M_sizes = (
+            torch.randint(1, (M_hint // alignment) + 1, (group_size,), dtype=torch.int)
+            * alignment
+        )
+        M_total = torch.sum(M_sizes).item()
+
+        # Create FP8 input tensors
+        A = torch.randn(int(M_total), K, dtype=dtype_output, device=device) * 0.1
+        A_fp8 = A.to(dtype_input)
+        B = torch.randn((group_size, K, N), dtype=dtype_output, device=device) * 0.01
+        B_fp8 = B.to(dtype_input)
+
+        # Create scale factors (one per group)
+        scale_a = torch.ones(group_size, dtype=dtype_scale, device=device)
+        scale_b = torch.ones(group_size, dtype=dtype_scale, device=device)
+
+        # Build offsets
+        offsets = torch.cumsum(M_sizes, dim=0).to(dtype=torch.int32, device=device)
+
+        def scaled_grouped_gemm_fn(A_packed, B_batched, scale_a, scale_b, offs):
+            return torch._scaled_grouped_mm(
+                A_packed, B_batched, scale_a, scale_b, offs=offs, out_dtype=dtype_output
+            )
+
+        # Eager execution
+        c_eager = scaled_grouped_gemm_fn(A_fp8, B_fp8, scale_a, scale_b, offsets)
+
+        # Test with CuTeDSL backend
+        with config.patch(
+            {
+                "max_autotune": True,
+                "max_autotune_gemm_backends": "CUTEDSL",
+                "test_configs.autotune_choice_name_regex": "cutedsl",
+                "autotune_fallback_to_aten": False,
+            }
+        ):
+            scaled_grouped_gemm_compiled = torch.compile(
+                scaled_grouped_gemm_fn, backend="inductor", dynamic=False
+            )
+            c_compiled = scaled_grouped_gemm_compiled(
+                A_fp8, B_fp8, scale_a, scale_b, offsets
+            )
+
+        self.assertEqual(c_eager.dtype, dtype_output)
+        self.assertEqual(c_compiled.dtype, dtype_output)
+        torch.testing.assert_close(c_eager, c_compiled, rtol=1e-2, atol=1e-2)
+
 
 if __name__ == "__main__":
     run_tests()
