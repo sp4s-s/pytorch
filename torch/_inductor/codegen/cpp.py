@@ -740,8 +740,16 @@ class CppOverrides(OpOverrides):
                 store(buf, node1_output_lowp)
                 node2_input_lowp = node_output_lowp # hit store cache
                 node2_input = node1_output # hit cse cache
+
+            IMPORTANT: We store metadata on the lowp csevar so that the cache is only
+            populated when the value is actually stored to a buffer (in CppKernel.store).
+            This avoids incorrectly caching for internal computations where the lowp
+            intermediate is semantically meaningful (e.g., layer_norm bf16 output used
+            in add with f32).
             """
-            V.kernel.cache_dtype_convert(x, src_dtype, csevar, dtype)
+            # Store metadata for later caching at store time
+            csevar._lowp_fp32_source = x
+            csevar._lowp_src_dtype = src_dtype
         return csevar
 
     @staticmethod
@@ -1656,7 +1664,9 @@ class CppVecOverrides(CppOverrides):
         csevar = V.kernel.cse.generate(V.kernel.compute, expr)
         csevar.update_on_args("to_dtype", (x, dtype), {"src_dtype": src_dtype})
         if dtype in DTYPE_LOWP_FP and src_dtype == torch.float:
-            V.kernel.cache_dtype_convert(x, src_dtype, csevar, dtype)
+            # Store metadata for later caching at store time (see scalar to_dtype)
+            csevar._lowp_fp32_source = x
+            csevar._lowp_src_dtype = src_dtype
         return csevar
 
     @staticmethod
@@ -2125,10 +2135,34 @@ class CppKernel(Kernel):
         csevar.update_on_args("load", (self, name, index), {})
         return csevar
 
+    def _maybe_cache_lowp_fp_to_f32(self, value):
+        """
+        Cache dtype conversion for store/load consistency.
+        See https://github.com/pytorch/pytorch/issues/115260
+
+        When storing a low-precision value that came from a high-precision computation,
+        cache the reverse conversion so that loading and promoting back gives the same
+        result as using the high-precision value directly.
+
+        This is ONLY done at store time (not at to_dtype time) to avoid incorrectly
+        caching for internal computations where the low-precision is semantically meaningful.
+        """
+        if (
+            isinstance(value, CppCSEVariable)
+            and hasattr(value, "_lowp_fp32_source")
+            and value._lowp_fp32_source is not None
+        ):
+            src_var = value._lowp_fp32_source
+            src_dtype = getattr(value, "_lowp_src_dtype", torch.float)
+            self.cache_dtype_convert(src_var, src_dtype, value, value.dtype)
+
     def store(self, name, index, value, mode=None):
         assert "buf" in name
         var = self.args.output(name)
         index = self.rename_indexing(index)
+
+        self._maybe_cache_lowp_fp_to_f32(value)
+
         if mode is None:
             line = f"{var}[{cexpr_index(index)}] = {value};"
         elif mode == "atomic_add":
@@ -2953,6 +2987,9 @@ class CppVecKernel(CppKernel):
     def store(self, name, index, value, mode=None):
         assert "buf" in name
         assert isinstance(value, CppCSEVariable), value
+
+        self._maybe_cache_lowp_fp_to_f32(value)
+
         if not value.is_vec:
             # this happens when we store a scalar into a vectorized buffer like "fill"
             value = self.broadcast(value)
