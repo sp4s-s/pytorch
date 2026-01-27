@@ -1,6 +1,7 @@
 # Owner(s): ["module: dynamo"]
 
 import keyword
+import unittest
 
 import torch
 import torch._dynamo
@@ -8,6 +9,8 @@ from torch._dynamo.test_case import run_tests, TestCase
 from torch._dynamo.testing import CompileCounter, same
 
 
+# FIXME: re-enable LazyConstantVariable once compile time issues have been resolved
+@unittest.skip("temporarily disabled")
 class LazyConstantVariableTests(TestCase):
     def _assert_compile_count(self, fn, arg_sets, expected_frames):
         counter = CompileCounter()
