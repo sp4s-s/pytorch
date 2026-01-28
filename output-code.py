@@ -76,10 +76,11 @@ import torch
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
 from torch._inductor.runtime.runtime_utils import pallas_partial_reduce, torch_dtype_to_jax_runtime
 
 from jax.experimental.pallas import mosaic_gpu as plgpu
-def pallas_fused_add_mul_relu_sub_e5e40861_kernel(out_ptr0_alias, in_ptr0, in_ptr1, in_ptr2, in_ptr3, out_ptr0):
+def pallas_fused_add_mul_relu_sub_e5e40861_kernel(in_ptr0, in_ptr1, in_ptr2, in_ptr3, out_ptr0):
     # Define iteration variables as JAX arrays
     tmp0 = in_ptr0[...]
     tmp1 = in_ptr1[...]
@@ -92,14 +93,19 @@ def pallas_fused_add_mul_relu_sub_e5e40861_jit_wrapper(out_shapes, out_dtypes, o
         jax.ShapeDtypeStruct(shape, dtype)
         for shape, dtype in zip(out_shapes, out_dtypes)
     )
+    in_specs=[pl.BlockSpec(in_ptr0.shape, lambda i: (i, i)),
+              pl.BlockSpec(in_ptr1.shape, lambda i: (i, i)),
+              pl.BlockSpec(in_ptr2.shape, lambda i: (i, i)),
+              pl.BlockSpec(in_ptr3.shape, lambda i: (i, i))]
     return pl.pallas_call(
         pallas_fused_add_mul_relu_sub_e5e40861_kernel,
         out_shape=out_specs,
+        in_specs=in_specs,
         interpret=False,
         grid=(1,),
-        input_output_aliases={ 0: 0 },
+        compiler_params=pltpu.CompilerParams(),
     )(
-        out_ptr0_alias, in_ptr0, in_ptr1, in_ptr2, in_ptr3,
+        in_ptr0, in_ptr1, in_ptr2, in_ptr3,
     )
 def pallas_fused_add_mul_relu_sub_e5e40861_main(out_ptr0_alias, in_ptr0, in_ptr1, in_ptr2, in_ptr3, out_ptr0, stream=None):
     # Enable JAX x64 mode for float64/int64 support
