@@ -1,21 +1,21 @@
-import os
-os.environ["XLA_FLAGS"] = (
-    f"--xla_dump_hlo_as_text "
-    f"--xla_dump_to=dump/hlo "
-    f"--xla_dump_hlo_pass_re=.* "
-)
-os.environ["LIBTPU_INIT_ARGS"] = (
-    f"--xla_jf_dump_to=dump/llo "
-    f"--xla_jf_dump_hlo_text=true "
-    f"--xla_jf_dump_llo_text=true "
-    f"--xla_jf_dump_llo_html=false "
-    f"--xla_jf_dump_llo_static_gaps=true "
-    f"--xla_jf_emit_annotations=true "
-    f"--xla_jf_debug_level=2 "
-    f"--xla_mosaic_dump_to=dump/mosaic "
-    f"--xla_mosaic_enable_dump_debug_info=true "
-    f"--xla_mosaic_enable_llo_source_annotations=true"
-)
+# import os
+# os.environ["XLA_FLAGS"] = (
+#     f"--xla_dump_hlo_as_text "
+#     f"--xla_dump_to=dump/hlo "
+#     f"--xla_dump_hlo_pass_re=.* "
+# )
+# os.environ["LIBTPU_INIT_ARGS"] = (
+#     f"--xla_jf_dump_to=dump/llo "
+#     f"--xla_jf_dump_hlo_text=true "
+#     f"--xla_jf_dump_llo_text=true "
+#     f"--xla_jf_dump_llo_html=false "
+#     f"--xla_jf_dump_llo_static_gaps=true "
+#     f"--xla_jf_emit_annotations=true "
+#     f"--xla_jf_debug_level=2 "
+#     f"--xla_mosaic_dump_to=dump/mosaic "
+#     f"--xla_mosaic_enable_dump_debug_info=true "
+#     f"--xla_mosaic_enable_llo_source_annotations=true"
+# )
 
 
 # AOT ID: ['1_inference']
@@ -87,22 +87,19 @@ def pallas_fused_add_mul_relu_sub_e5e40861_kernel(in_ptr0, in_ptr1, in_ptr2, in_
     tmp9 = tmp0 + tmp1
     out_ptr0[...] = tmp9
 
-@functools.partial(jax.jit, static_argnums=(0, 1,), donate_argnums=(2,))
+# @functools.partial(jax.jit, static_argnums=(0, 1,), donate_argnums=(2,))
 def pallas_fused_add_mul_relu_sub_e5e40861_jit_wrapper(out_shapes, out_dtypes, out_ptr0_alias, in_ptr0, in_ptr1, in_ptr2, in_ptr3):
-    out_specs = tuple(
-        jax.ShapeDtypeStruct(shape, dtype)
-        for shape, dtype in zip(out_shapes, out_dtypes)
-    )
-    in_specs=[pl.BlockSpec(in_ptr0.shape, lambda i: (i, i)),
-              pl.BlockSpec(in_ptr1.shape, lambda i: (i, i)),
-              pl.BlockSpec(in_ptr2.shape, lambda i: (i, i)),
-              pl.BlockSpec(in_ptr3.shape, lambda i: (i, i))]
+    in_specs=[pl.BlockSpec((32, 32), lambda i, j: (i, j)),
+              pl.BlockSpec((32, 32), lambda i, j: (i, j)),
+              pl.BlockSpec((32, 32), lambda i, j: (i, j)),
+              pl.BlockSpec((32, 32), lambda i, j: (i, j))]
     return pl.pallas_call(
         pallas_fused_add_mul_relu_sub_e5e40861_kernel,
-        out_shape=out_specs,
+        out_shape=jax.ShapeDtypeStruct(out_shapes[0], out_dtypes[0]),
         in_specs=in_specs,
+        out_specs=pl.BlockSpec((32, 32), lambda i, j: (i, j)),
         interpret=False,
-        grid=(1,),
+        grid=(1, 1),
         compiler_params=pltpu.CompilerParams(),
     )(
         in_ptr0, in_ptr1, in_ptr2, in_ptr3,
