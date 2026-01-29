@@ -1382,6 +1382,22 @@ class PallasTestsMixin:
         expected = fn(x, y)
         self.assertEqual(result, expected)
 
+    def test_simple_mlp(self):
+        def fn(w_0, w_1, w_2, x):
+            x = (x @ w_0).relu()
+            x = (x @ w_1).relu()
+            x = (x @ w_2).relu()
+            return x
+
+        compiled = self._compile(fn)
+
+        ws = [torch.rand(32, 32, device=self.DEVICE) for _ in range(3)]
+        x = torch.randn(32, 32, device=self.DEVICE)
+
+        result = compiled(*ws, x)
+        expected = fn(*ws, x)
+        self.assertEqual(result, expected)
+
     def test_warpgroup_size_2d_aligned_32x8(self):
         """Test 2D tensor with 32x8 = 256 elements (2 warpgroups)."""
 
